@@ -28,7 +28,6 @@ const slideCreateFields: AdminField[] = [
 ];
 
 const slideUpdateFields: AdminField[] = [
-  { name: "url", label: "URL", type: "text", emptyAsNull: true, wide: true },
   {
     name: "media_type",
     label: "Media type",
@@ -162,6 +161,36 @@ function parsePayload(fields: AdminField[], state: FormState, partial: boolean) 
   }
 
   return payload;
+}
+
+function toFiles(files: FileList | null) {
+  return Array.from(files || []);
+}
+
+function appendExtraFields(form: FormData, fields: AdminField[] | undefined, state: FormState) {
+  if (!fields?.length) return;
+
+  const payload = parsePayload(fields, state, false);
+  Object.entries(payload).forEach(([key, value]) => {
+    if (value !== null && value !== undefined) form.append(key, String(value));
+  });
+}
+
+async function uploadActionFiles(
+  action: UploadAction,
+  row: JsonRecord,
+  files: File[],
+  extraState: FormState,
+  request: Requester,
+) {
+  const form = new FormData();
+  files.forEach((file) => form.append(action.fieldName, file));
+  appendExtraFields(form, action.extraFields, extraState);
+
+  return request<JsonRecord>(action.path(row), {
+    method: "POST",
+    body: form,
+  });
 }
 
 function LoginScreen({ onLogin }: { onLogin: (session: StoredSession) => void }) {
@@ -340,20 +369,10 @@ function UploadControl({
     setBusy(true);
     setStatus("Загрузка...");
     try {
-      const form = new FormData();
-      files.forEach((file) => form.append(action.fieldName, file));
-      if (action.extraFields?.length) {
-        const payload = parsePayload(action.extraFields, extraState, false);
-        Object.entries(payload).forEach(([key, value]) => {
-          if (value !== null && value !== undefined) form.append(key, String(value));
-        });
-      }
-      const result = await request<JsonRecord>(action.path(row), {
-        method: "POST",
-        body: form,
-      });
+      const result = await uploadActionFiles(action, row, files, extraState, request);
       setStatus("Готово");
-      onDone();
+      setFiles([]);
+      onDone(result);
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Ошибка загрузки.");
     } finally {
@@ -375,16 +394,19 @@ function UploadControl({
           ))}
         </div>
       ) : null}
-      <label className="pill">
-        {busy ? "..." : action.label}
+      <label className="file-picker">
+        <span>{action.label}</span>
         <input
-          hidden
           accept={action.accept}
           multiple={action.multiple}
           type="file"
-          onChange={(event) => upload(event.target.files)}
+          onChange={(event) => setFiles(toFiles(event.target.files))}
         />
       </label>
+      {fileNames ? <span className="small muted">{fileNames}</span> : null}
+      <button disabled={busy || !files.length} type="button" onClick={upload}>
+        {busy ? "..." : "Загрузить"}
+      </button>
       {status ? <span className="small muted">{status}</span> : null}
     </div>
   );
@@ -632,6 +654,15 @@ function ModuleView({ module, request }: { module: AdminModule; request: Request
   const [relationOptions, setRelationOptions] = useState<Record<string, SelectOption[]>>({});
   const [selected, setSelected] = useState<JsonRecord | null>(null);
   const [form, setForm] = useState<FormState>(() => initialForm(module));
+  const [formFiles, setFormFiles] = useState<Record<string, File[]>>({});
+  const [formUploadExtras, setFormUploadExtras] = useState<Record<string, FormState>>(() =>
+    Object.fromEntries(
+      (module.uploads || []).map((action) => [
+        action.key,
+        initialForm(emptyModule(action.extraFields || []), null),
+      ]),
+    ),
+  );
   const [filter, setFilter] = useState("");
   const [status, setStatus] = useState("");
   const [busy, setBusy] = useState(false);
@@ -703,11 +734,21 @@ function ModuleView({ module, request }: { module: AdminModule; request: Request
   function selectRow(row: JsonRecord) {
     setSelected(row);
     setForm(initialForm(module, row));
+    setFormFiles({});
   }
 
   function resetCreate() {
     setSelected(null);
     setForm(initialForm(module));
+    setFormFiles({});
+    setFormUploadExtras(
+      Object.fromEntries(
+        (module.uploads || []).map((action) => [
+          action.key,
+          initialForm(emptyModule(action.extraFields || []), null),
+        ]),
+      ),
+    );
   }
 
   async function save(event: FormEvent) {
@@ -717,12 +758,26 @@ function ModuleView({ module, request }: { module: AdminModule; request: Request
       const payload = parsePayload(module.fields, form, Boolean(selected));
       const path = selected ? module.updatePath(selected) : module.createPath;
       const method = selected ? "PATCH" : "POST";
-      const result = await request<JsonRecord>(path, {
+      let result = await request<JsonRecord>(path, {
         method,
         body: JSON.stringify(payload),
       });
+      if (result && typeof result === "object") {
+        for (const action of module.uploads || []) {
+          const files = formFiles[action.key] || [];
+          if (!files.length) continue;
+          result = await uploadActionFiles(
+            action,
+            result,
+            files,
+            formUploadExtras[action.key] || {},
+            request,
+          );
+        }
+      }
       setStatus(selected ? "Запись обновлена." : "Запись создана.");
       if (result && typeof result === "object") selectRow(result);
+      setFormFiles({});
       await loadRows();
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Ошибка сохранения.");
@@ -828,6 +883,50 @@ function ModuleView({ module, request }: { module: AdminModule; request: Request
                   options={relationOptions[field.name]}
                 />
               ))}
+              {module.uploads?.map((action) => {
+                const files = formFiles[action.key] || [];
+                const names = files.map((file) => file.name).join(", ");
+
+                return (
+                  <div key={action.key} className="wide inline-upload">
+                    <label>
+                      {action.label}
+                      <input
+                        accept={action.accept}
+                        multiple={action.multiple}
+                        type="file"
+                        onChange={(event) =>
+                          setFormFiles((current) => ({
+                            ...current,
+                            [action.key]: toFiles(event.target.files),
+                          }))
+                        }
+                      />
+                    </label>
+                    {action.extraFields?.length ? (
+                      <div className="upload-fields">
+                        {action.extraFields.map((field) => (
+                          <FieldInput
+                            key={field.name}
+                            field={field}
+                            value={formUploadExtras[action.key]?.[field.name]}
+                            onChange={(value) =>
+                              setFormUploadExtras((current) => ({
+                                ...current,
+                                [action.key]: {
+                                  ...(current[action.key] || {}),
+                                  [field.name]: value,
+                                },
+                              }))
+                            }
+                          />
+                        ))}
+                      </div>
+                    ) : null}
+                    {names ? <span className="small muted">{names}</span> : null}
+                  </div>
+                );
+              })}
             </div>
             <div className="panel-actions">
               <button disabled={busy} type="submit">

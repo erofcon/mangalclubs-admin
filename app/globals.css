@@ -356,6 +356,26 @@ tbody tr:hover {
   padding: 6px;
 }
 
+.file-picker,
+.inline-upload {
+  display: grid;
+  gap: 4px;
+}
+
+.file-picker span {
+  color: var(--link);
+}
+
+.inline-upload {
+  border: 1px solid var(--line);
+  padding: 6px;
+}
+
+.inline-upload label {
+  display: grid;
+  gap: 3px;
+}
+
 .upload-fields {
   display: grid;
   gap: 6px;
