@@ -126,6 +126,7 @@ export const adminModules: AdminModule[] = [
       { name: "title", label: "Title", type: "text", required: true },
       { name: "description", label: "Description", type: "textarea", required: true, wide: true },
       { name: "long_description", label: "Long description", type: "textarea", emptyAsNull: true, wide: true },
+      { name: "preview_url", label: "Preview URL", type: "text", emptyAsNull: true, wide: true },
       ...activeSort,
     ],
     uploads: [
@@ -180,6 +181,7 @@ export const adminModules: AdminModule[] = [
       },
     ],
     details: [{ label: "Images", name: "images" }],
+    supportsBookingImages: true,
   },
   {
     key: "delivery-zones",
@@ -215,6 +217,7 @@ export const adminModules: AdminModule[] = [
       { name: "sku", label: "SKU", type: "text", emptyAsNull: true },
       { name: "name_override", label: "Name override", type: "text", emptyAsNull: true },
       { name: "description", label: "Description", type: "textarea", emptyAsNull: true, wide: true },
+      { name: "image_url", label: "Image URL", type: "text", emptyAsNull: true, wide: true },
       ...activeSort,
     ],
     uploads: [
@@ -226,6 +229,7 @@ export const adminModules: AdminModule[] = [
         accept: "image/*",
       },
     ],
+    supportsMenuBrowser: true,
   },
   {
     key: "stories",
@@ -241,6 +245,7 @@ export const adminModules: AdminModule[] = [
     fields: [
       { name: "slug", label: "Slug", type: "text", required: true },
       { name: "title", label: "Title", type: "text", required: true },
+      { name: "preview_url", label: "Preview URL", type: "text", emptyAsNull: true, wide: true },
       { name: "description", label: "Description", type: "textarea", emptyAsNull: true, wide: true },
       ...activeSort,
     ],

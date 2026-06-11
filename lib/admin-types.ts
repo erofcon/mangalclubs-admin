@@ -75,4 +75,6 @@ export type AdminModule = {
   uploads?: UploadAction[];
   details?: Array<{ label: string; name: string }>;
   supportsStorySlides?: boolean;
+  supportsMenuBrowser?: boolean;
+  supportsBookingImages?: boolean;
 };

@@ -388,6 +388,42 @@ tbody tr:hover {
   width: 100%;
 }
 
+.menu-browser {
+  margin-bottom: 16px;
+}
+
+.menu-browser-head {
+  align-items: end;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.menu-browser-head label {
+  display: grid;
+  gap: 3px;
+}
+
+.menu-browser-grid {
+  align-items: start;
+  display: grid;
+  gap: 12px;
+  grid-template-columns: minmax(320px, 1fr) minmax(300px, 440px);
+}
+
+.menu-table {
+  max-height: 430px;
+}
+
+.compact-toolbar {
+  margin-bottom: 8px;
+}
+
+.selected-row {
+  background: #ffffc7 !important;
+}
+
 .story-slides {
   border-top: 1px solid var(--line);
   display: grid;
@@ -548,6 +584,7 @@ tbody tr:hover {
   }
 
   .panels,
+  .menu-browser-grid,
   .form-grid,
   .login-grid {
     grid-template-columns: 1fr;

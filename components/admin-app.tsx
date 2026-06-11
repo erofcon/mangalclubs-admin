@@ -41,6 +41,16 @@ const slideUpdateFields: AdminField[] = [
   ...slideCreateFields,
 ];
 
+const menuOverrideFields: AdminField[] = [
+  { name: "iiko_item_id", label: "IIKO item ID", type: "text", emptyAsNull: true },
+  { name: "sku", label: "SKU", type: "text", emptyAsNull: true },
+  { name: "name_override", label: "Name override", type: "text", emptyAsNull: true },
+  { name: "description", label: "Description", type: "textarea", emptyAsNull: true, wide: true },
+  { name: "image_url", label: "Image URL", type: "text", emptyAsNull: true, wide: true },
+  { name: "sort_order", label: "Sort", type: "number", parser: "integer", defaultValue: 0 },
+  { name: "is_active", label: "Active", type: "checkbox", defaultValue: true },
+];
+
 const emptyModule = (fields: AdminField[]): AdminModule => ({
   key: "form",
   title: "Form",
@@ -91,6 +101,10 @@ function initialForm(module: AdminModule, row?: JsonRecord | null): FormState {
       acc[field.name] = row.previewImage;
       return acc;
     }
+    if (row && field.name === "image_url" && Object.prototype.hasOwnProperty.call(row, "image")) {
+      acc[field.name] = row.image;
+      return acc;
+    }
     if (field.defaultValue !== undefined) {
       acc[field.name] = field.type === "json" ? stringify(field.defaultValue) : field.defaultValue;
       return acc;
@@ -129,7 +143,7 @@ function parsePayload(fields: AdminField[], state: FormState, partial: boolean) 
 
   for (const field of fields) {
     const raw = state[field.name];
-    if (partial && (raw === "" || raw === undefined)) continue;
+    if (partial && raw === undefined) continue;
 
     if (field.type === "checkbox") {
       payload[field.name] = Boolean(raw);
@@ -649,6 +663,439 @@ function StorySlidesEditor({
   );
 }
 
+type MenuBrowserItem = JsonRecord & {
+  rowKey: string;
+  categoryTitle: string;
+};
+
+function menuItemIdentity(item: JsonRecord | null | undefined) {
+  if (!item) return "";
+  return String(item.iiko_item_id || item.id || item.sku || "");
+}
+
+function findMenuOverride(item: JsonRecord | null, overrides: JsonRecord[]) {
+  if (!item) return null;
+  const itemId = String(item.id || "");
+  const sku = String(item.sku || "");
+
+  return (
+    overrides.find((override) => {
+      const overrideIikoId = String(override.iiko_item_id || "");
+      const overrideSku = String(override.sku || "");
+      return (itemId && overrideIikoId === itemId) || (sku && overrideSku === sku);
+    }) || null
+  );
+}
+
+function menuOverrideInitial(item: JsonRecord | null, override: JsonRecord | null) {
+  if (override) return initialForm(emptyModule(menuOverrideFields), override);
+
+  return initialForm(emptyModule(menuOverrideFields), {
+    iiko_item_id: item?.id || "",
+    sku: item?.sku || "",
+    name_override: item?.name || "",
+    description: item?.description || "",
+    image_url: item?.image || "",
+    sort_order: 0,
+    is_active: true,
+  });
+}
+
+function flattenMenu(menu: JsonRecord | null) {
+  const sections = Array.isArray(menu?.menu) ? (menu.menu as JsonRecord[]) : [];
+
+  return sections.flatMap<MenuBrowserItem>((section, sectionIndex) => {
+    const items = Array.isArray(section.items) ? (section.items as JsonRecord[]) : [];
+    return items.map((item, itemIndex) => ({
+      ...item,
+      categoryTitle: String(section.title || section.id || "category"),
+      rowKey: `${section.id || sectionIndex}:${item.id || item.sku || itemIndex}`,
+    }));
+  });
+}
+
+function MenuBrowser({
+  request,
+  onDone,
+}: {
+  request: Requester;
+  onDone: () => void | Promise<void>;
+}) {
+  const [organizations, setOrganizations] = useState<JsonRecord[]>([]);
+  const [organizationId, setOrganizationId] = useState("");
+  const [orderType, setOrderType] = useState("pickup");
+  const [menu, setMenu] = useState<JsonRecord | null>(null);
+  const [overrides, setOverrides] = useState<JsonRecord[]>([]);
+  const [selectedKey, setSelectedKey] = useState("");
+  const [editState, setEditState] = useState<FormState>(() => menuOverrideInitial(null, null));
+  const [imageFile, setImageFile] = useState<File | null>(null);
+  const [filter, setFilter] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [status, setStatus] = useState("");
+
+  const menuItems = useMemo(() => flattenMenu(menu), [menu]);
+  const filteredItems = useMemo(() => {
+    const q = filter.trim().toLowerCase();
+    if (!q) return menuItems;
+    return menuItems.filter((item) => JSON.stringify(item).toLowerCase().includes(q));
+  }, [filter, menuItems]);
+
+  const selectedItem = useMemo(
+    () => menuItems.find((item) => item.rowKey === selectedKey) || null,
+    [menuItems, selectedKey],
+  );
+  const selectedOverride = useMemo(
+    () => findMenuOverride(selectedItem, overrides),
+    [overrides, selectedItem],
+  );
+
+  const overrideCount = overrides.length;
+  const selectedHasOverride = Boolean(selectedOverride);
+
+  async function loadOrganizations() {
+    const data = await request<JsonRecord[]>("/api/v1/organizations");
+    const list = Array.isArray(data) ? data : [];
+    setOrganizations(list);
+    setOrganizationId((current) => current || String(list[0]?.id || ""));
+  }
+
+  async function loadOverrides() {
+    const data = await request<JsonRecord[]>("/api/v1/menu/admin/items");
+    setOverrides(Array.isArray(data) ? data : []);
+  }
+
+  async function loadMenu(refresh = false) {
+    if (!organizationId) {
+      setStatus("Choose organization first.");
+      return;
+    }
+
+    setBusy(true);
+    setStatus(refresh ? "Refreshing menu..." : "Loading menu...");
+    try {
+      const query = new URLSearchParams({
+        orderType,
+        refresh: String(refresh),
+      });
+      const data = await request<JsonRecord>(`/api/v1/menu/admin/organizations/${organizationId}?${query}`);
+      setMenu(data && typeof data === "object" ? data : null);
+      setSelectedKey("");
+      await loadOverrides();
+      setStatus(`Menu loaded: ${flattenMenu(data && typeof data === "object" ? data : null).length} items.`);
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Menu load failed.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function syncMenu() {
+    if (!organizationId) {
+      setStatus("Choose organization first.");
+      return;
+    }
+
+    setBusy(true);
+    setStatus("Syncing menu...");
+    try {
+      const query = new URLSearchParams({ orderType });
+      const data = await request<JsonRecord>(`/api/v1/menu/admin/organizations/${organizationId}/sync?${query}`, {
+        method: "POST",
+      });
+      setMenu(data && typeof data === "object" ? data : null);
+      setSelectedKey("");
+      await loadOverrides();
+      setStatus("Menu synced.");
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Menu sync failed.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function saveOverride(event: FormEvent) {
+    event.preventDefault();
+    const payload = parsePayload(menuOverrideFields, editState, Boolean(selectedOverride));
+    const hasIdentity = Boolean(payload.iiko_item_id || payload.sku);
+
+    if (!hasIdentity) {
+      setStatus("Set IIKO item ID or SKU.");
+      return;
+    }
+
+    setBusy(true);
+    setStatus(selectedOverride ? "Updating override..." : "Creating override...");
+    try {
+      let result = await request<JsonRecord>(
+        selectedOverride ? `/api/v1/menu/admin/items/${selectedOverride.id}` : "/api/v1/menu/admin/items",
+        {
+          method: selectedOverride ? "PATCH" : "POST",
+          body: JSON.stringify(payload),
+        },
+      );
+
+      if (imageFile) {
+        const form = new FormData();
+        form.append("image", imageFile);
+        result = await request<JsonRecord>(`/api/v1/menu/admin/items/${result.id}/image`, {
+          method: "POST",
+          body: form,
+        });
+        setImageFile(null);
+      }
+
+      await loadOverrides();
+      await onDone();
+      setEditState(initialForm(emptyModule(menuOverrideFields), result));
+      setStatus("Override saved.");
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Override save failed.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function selectMenuItem(item: MenuBrowserItem) {
+    const override = findMenuOverride(item, overrides);
+    setSelectedKey(item.rowKey);
+    setEditState(menuOverrideInitial(item, override));
+    setImageFile(null);
+  }
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      Promise.all([loadOrganizations(), loadOverrides()]).catch((error) => {
+        setStatus(error instanceof Error ? error.message : "Menu editor init failed.");
+      });
+    }, 0);
+    return () => window.clearTimeout(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    if (!selectedItem) return;
+    const timer = window.setTimeout(() => {
+      setEditState(menuOverrideInitial(selectedItem, selectedOverride));
+    }, 0);
+    return () => window.clearTimeout(timer);
+  }, [selectedItem, selectedOverride]);
+
+  return (
+    <fieldset className="menu-browser">
+      <legend>Menu editor</legend>
+      <div className="menu-browser-head">
+        <label>
+          Organization
+          <select value={organizationId} onChange={(event) => setOrganizationId(event.target.value)}>
+            <option value="">Choose organization</option>
+            {organizations.map((organization) => (
+              <option key={String(organization.id)} value={String(organization.id)}>
+                {optionLabel(organization, ["name", "slug", "id"])}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          Order type
+          <select value={orderType} onChange={(event) => setOrderType(event.target.value)}>
+            <option value="pickup">pickup</option>
+            <option value="delivery">delivery</option>
+          </select>
+        </label>
+        <button disabled={busy || !organizationId} type="button" onClick={() => void loadMenu(false)}>
+          Load menu
+        </button>
+        <button disabled={busy || !organizationId} type="button" onClick={() => void loadMenu(true)}>
+          Refresh cache
+        </button>
+        <button disabled={busy || !organizationId} type="button" onClick={() => void syncMenu()}>
+          Sync from IIKO
+        </button>
+        <span className="small muted">Overrides: {overrideCount}</span>
+      </div>
+
+      <div className="menu-browser-grid">
+        <div>
+          <div className="toolbar compact-toolbar">
+            <label>
+              Search menu ({menuItems.length})
+              <input value={filter} onChange={(event) => setFilter(event.target.value)} placeholder="name, sku, category" />
+            </label>
+          </div>
+          <div className="table-wrap menu-table">
+            <table>
+              <thead>
+                <tr>
+                  <th>Action</th>
+                  <th>Category</th>
+                  <th>Name</th>
+                  <th>SKU</th>
+                  <th>Price</th>
+                  <th>Override</th>
+                </tr>
+              </thead>
+              <tbody>
+                {filteredItems.map((item) => {
+                  const override = findMenuOverride(item, overrides);
+                  return (
+                    <tr key={item.rowKey} className={item.rowKey === selectedKey ? "selected-row" : ""}>
+                      <td>
+                        <button className="link-button" type="button" onClick={() => selectMenuItem(item)}>
+                          edit
+                        </button>
+                      </td>
+                      <td>{compact(item.categoryTitle)}</td>
+                      <td>{compact(item.name)}</td>
+                      <td>{compact(item.sku)}</td>
+                      <td>{compact(item.price)}</td>
+                      <td>{override ? <span className="ok">yes</span> : <span className="muted">no</span>}</td>
+                    </tr>
+                  );
+                })}
+                {!filteredItems.length ? (
+                  <tr>
+                    <td colSpan={6} className="muted">
+                      Load menu or change search.
+                    </td>
+                  </tr>
+                ) : null}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <form className="nested-form" onSubmit={saveOverride}>
+          <p className="small muted">
+            {selectedItem
+              ? `${selectedHasOverride ? "Edit" : "Create"} override for ${selectedItem.name || menuItemIdentity(selectedItem)}`
+              : "Select menu item or fill identity manually."}
+          </p>
+          <div className="form-grid">
+            {menuOverrideFields.map((field) => (
+              <FieldInput
+                key={field.name}
+                field={field}
+                value={editState[field.name]}
+                onChange={(value) => setEditState((current) => ({ ...current, [field.name]: value }))}
+              />
+            ))}
+            <label className="wide">
+              Image file
+              <input accept="image/*" type="file" onChange={(event) => setImageFile(event.target.files?.[0] || null)} />
+            </label>
+          </div>
+          <div className="panel-actions">
+            <button disabled={busy} type="submit">
+              {selectedHasOverride ? "Save override" : "Create override"}
+            </button>
+            <button
+              disabled={busy}
+              type="button"
+              onClick={() => {
+                setSelectedKey("");
+                setEditState(menuOverrideInitial(null, null));
+                setImageFile(null);
+              }}
+            >
+              Clear
+            </button>
+          </div>
+          <p className="status-line muted">{status}</p>
+        </form>
+      </div>
+    </fieldset>
+  );
+}
+
+function BookingImagesEditor({
+  booking,
+  request,
+  onBookingChange,
+  onDone,
+}: {
+  booking: JsonRecord;
+  request: Requester;
+  onBookingChange: (booking: JsonRecord) => void;
+  onDone: () => void | Promise<void>;
+}) {
+  const images = Array.isArray(booking.images) ? (booking.images as JsonRecord[]) : [];
+  const [busyId, setBusyId] = useState("");
+  const [status, setStatus] = useState("");
+
+  async function deleteImage(image: JsonRecord) {
+    const imageId = String(image.id || "");
+    if (!imageId) {
+      setStatus("Image id is missing.");
+      return;
+    }
+
+    if (!window.confirm(`Delete image ${imageId}?`)) return;
+
+    setBusyId(imageId);
+    setStatus("Deleting image...");
+    try {
+      const nextBooking = await request<JsonRecord>(`/api/v1/bookings/${booking.id}/images/${imageId}`, {
+        method: "DELETE",
+      });
+      onBookingChange(nextBooking);
+      await onDone();
+      setStatus("Image deleted.");
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Image delete failed.");
+    } finally {
+      setBusyId("");
+    }
+  }
+
+  return (
+    <div className="story-slides">
+      <p className="small muted">Booking images ({images.length})</p>
+      <div className="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Action</th>
+              <th>URL</th>
+              <th>Orientation</th>
+              <th>Sort</th>
+            </tr>
+          </thead>
+          <tbody>
+            {images.map((image) => {
+              const imageId = String(image.id || image.url || "");
+              return (
+                <tr key={imageId}>
+                  <td>
+                    <button
+                      className="link-button danger"
+                      disabled={busyId === String(image.id || "")}
+                      type="button"
+                      onClick={() => void deleteImage(image)}
+                    >
+                      delete
+                    </button>
+                  </td>
+                  <td>{compact(image.url)}</td>
+                  <td>{compact(image.orientation)}</td>
+                  <td>{compact(image.sort_order)}</td>
+                </tr>
+              );
+            })}
+            {!images.length ? (
+              <tr>
+                <td colSpan={4} className="muted">
+                  No images.
+                </td>
+              </tr>
+            ) : null}
+          </tbody>
+        </table>
+      </div>
+      <p className="status-line muted">{status}</p>
+    </div>
+  );
+}
+
 function ModuleView({ module, request }: { module: AdminModule; request: Requester }) {
   const [rows, setRows] = useState<JsonRecord[]>([]);
   const [relationOptions, setRelationOptions] = useState<Record<string, SelectOption[]>>({});
@@ -816,6 +1263,8 @@ function ModuleView({ module, request }: { module: AdminModule; request: Request
         </a>
       </div>
 
+      {module.supportsMenuBrowser ? <MenuBrowser request={request} onDone={loadRows} /> : null}
+
       <h2 className="section-title">Таблица: {module.tableName}</h2>
       <div className="toolbar">
         <label>
@@ -962,6 +1411,14 @@ function ModuleView({ module, request }: { module: AdminModule; request: Request
                   story={selected}
                   request={request}
                   onStoryChange={selectRow}
+                  onDone={loadRows}
+                />
+              ) : null}
+              {module.supportsBookingImages ? (
+                <BookingImagesEditor
+                  booking={selected}
+                  request={request}
+                  onBookingChange={selectRow}
                   onDone={loadRows}
                 />
               ) : null}
