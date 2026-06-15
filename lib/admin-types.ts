@@ -26,10 +26,12 @@ export type FieldType =
   | "email"
   | "password"
   | "number"
+  | "time"
   | "textarea"
   | "checkbox"
   | "json"
-  | "select";
+  | "select"
+  | "working-hours";
 
 export type AdminField = {
   name: string;
@@ -39,6 +41,9 @@ export type AdminField = {
   wide?: boolean;
   placeholder?: string;
   help?: string;
+  aliases?: string[];
+  autoComplete?: string;
+  inputName?: string;
   defaultValue?: unknown;
   options?: Array<{ label: string; value: string }>;
   relation?: {
@@ -66,15 +71,18 @@ export type AdminModule = {
   tableName: string;
   description: string;
   listPath: string;
-  createPath: string;
-  updatePath: (record: JsonRecord) => string;
-  deletePath: (record: JsonRecord) => string;
+  createPath?: string;
+  updatePath?: (record: JsonRecord) => string;
+  deletePath?: (record: JsonRecord) => string;
   idField: string;
   columns: string[];
   fields: AdminField[];
+  readOnly?: boolean;
   uploads?: UploadAction[];
   details?: Array<{ label: string; name: string }>;
   supportsStorySlides?: boolean;
   supportsMenuBrowser?: boolean;
   supportsBookingImages?: boolean;
+  supportsOrganizationTools?: boolean;
+  supportsOrderTools?: boolean;
 };

@@ -307,6 +307,10 @@ tbody tr:hover {
   margin-top: 16px;
 }
 
+.read-only-panels {
+  grid-template-columns: minmax(0, 1fr);
+}
+
 .form-grid {
   display: grid;
   gap: 8px;
@@ -325,11 +329,19 @@ tbody tr:hover {
   width: 100%;
 }
 
+.field-title {
+  font-weight: 700;
+}
+
 .check-label {
   align-items: center;
   display: flex !important;
   gap: 6px !important;
   grid-template-columns: auto !important;
+}
+
+.compact-check {
+  justify-content: flex-start;
 }
 
 .check-label input {
@@ -386,6 +398,39 @@ tbody tr:hover {
 .upload-fields textarea,
 .upload-fields select {
   width: 100%;
+}
+
+.working-hours-editor {
+  display: grid;
+  gap: 6px;
+}
+
+.working-hours-grid {
+  border: 1px solid var(--line);
+  display: grid;
+}
+
+.working-hours-row {
+  align-items: center;
+  display: grid;
+  gap: 6px;
+  grid-template-columns: 86px 86px 1fr 1fr;
+  padding: 5px 6px;
+}
+
+.working-hours-row + .working-hours-row {
+  border-top: 1px solid var(--line);
+}
+
+.working-hours-row input[type="time"] {
+  min-width: 0;
+  width: 100%;
+}
+
+.tool-grid {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(3, minmax(220px, 1fr));
 }
 
 .menu-browser {
@@ -585,8 +630,13 @@ tbody tr:hover {
 
   .panels,
   .menu-browser-grid,
+  .tool-grid,
   .form-grid,
   .login-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .working-hours-row {
     grid-template-columns: 1fr;
   }
 

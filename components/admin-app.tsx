@@ -19,6 +19,17 @@ type FormState = Record<string, unknown>;
 type SelectOption = { label: string; value: string };
 type Requester = <T>(path: string, options?: ApiOptions) => Promise<T>;
 
+const weekDays = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"];
+
+function defaultWorkingHours() {
+  return weekDays.map((_, weekday) => ({
+    weekday,
+    is_closed: false,
+    opens_at: "10:00:00",
+    closes_at: "22:00:00",
+  }));
+}
+
 const slideCreateFields: AdminField[] = [
   { name: "title", label: "Title", type: "text", emptyAsNull: true },
   { name: "caption", label: "Caption", type: "textarea", emptyAsNull: true, wide: true },
@@ -71,6 +82,47 @@ function stringify(value: unknown) {
   return String(value);
 }
 
+function normalizeTimeInput(value: unknown) {
+  const text = String(value ?? "").trim();
+  return text.length === 5 ? `${text}:00` : text;
+}
+
+function normalizeWorkingHours(value: unknown) {
+  const rows = Array.isArray(value) ? (value as JsonRecord[]) : [];
+  const byWeekday = new Map(rows.map((row) => [Number(row.weekday), row]));
+
+  return weekDays.map((_, weekday) => {
+    const source = byWeekday.get(weekday);
+    const isClosed = Boolean(source?.is_closed);
+    return {
+      weekday,
+      is_closed: isClosed,
+      opens_at: isClosed ? "" : String(source?.opens_at || "10:00:00"),
+      closes_at: isClosed ? "" : String(source?.closes_at || "22:00:00"),
+    };
+  });
+}
+
+function serializeWorkingHours(value: unknown) {
+  return normalizeWorkingHours(value).map((row) => {
+    if (row.is_closed) {
+      return {
+        weekday: row.weekday,
+        is_closed: true,
+        opens_at: null,
+        closes_at: null,
+      };
+    }
+
+    return {
+      weekday: row.weekday,
+      is_closed: false,
+      opens_at: normalizeTimeInput(row.opens_at),
+      closes_at: normalizeTimeInput(row.closes_at),
+    };
+  });
+}
+
 function compact(value: unknown) {
   if (value === null || value === undefined || value === "") return <span className="muted">NULL</span>;
   if (typeof value === "boolean") return value ? <span className="ok">true</span> : <span className="danger">false</span>;
@@ -87,29 +139,56 @@ function compact(value: unknown) {
   return text.length > 64 ? `${text.slice(0, 61)}...` : text;
 }
 
+function fieldValue(row: JsonRecord, field: AdminField) {
+  const keys = [field.name, ...(field.aliases || [])];
+  for (const key of keys) {
+    if (Object.prototype.hasOwnProperty.call(row, key)) {
+      return { found: true, value: row[key] };
+    }
+  }
+  return { found: false, value: undefined };
+}
+
+function normalizeFieldValue(field: AdminField, value: unknown) {
+  if (field.type === "json") return stringify(value);
+  if (field.type === "working-hours") return normalizeWorkingHours(value);
+  return value;
+}
+
 function initialForm(module: AdminModule, row?: JsonRecord | null): FormState {
   return module.fields.reduce<FormState>((acc, field) => {
-    if (row && Object.prototype.hasOwnProperty.call(row, field.name)) {
-      acc[field.name] = field.type === "json" ? stringify(row[field.name]) : row[field.name];
-      return acc;
-    }
-    if (row && field.name === "is_active" && Object.prototype.hasOwnProperty.call(row, "active")) {
-      acc[field.name] = row.active;
-      return acc;
-    }
-    if (row && field.name === "preview_url" && Object.prototype.hasOwnProperty.call(row, "previewImage")) {
-      acc[field.name] = row.previewImage;
-      return acc;
-    }
-    if (row && field.name === "image_url" && Object.prototype.hasOwnProperty.call(row, "image")) {
-      acc[field.name] = row.image;
+    if (row) {
+      const source = fieldValue(row, field);
+      if (source.found) {
+        acc[field.name] = normalizeFieldValue(field, source.value);
+        return acc;
+      }
+      if (field.name === "is_active" && Object.prototype.hasOwnProperty.call(row, "active")) {
+        acc[field.name] = row.active;
+        return acc;
+      }
+      if (field.name === "preview_url" && Object.prototype.hasOwnProperty.call(row, "previewImage")) {
+        acc[field.name] = row.previewImage;
+        return acc;
+      }
+      if (field.name === "image_url" && Object.prototype.hasOwnProperty.call(row, "image")) {
+        acc[field.name] = row.image;
+        return acc;
+      }
+      acc[field.name] = undefined;
       return acc;
     }
     if (field.defaultValue !== undefined) {
-      acc[field.name] = field.type === "json" ? stringify(field.defaultValue) : field.defaultValue;
+      acc[field.name] =
+        field.type === "json"
+          ? stringify(field.defaultValue)
+          : field.type === "working-hours"
+            ? normalizeWorkingHours(field.defaultValue)
+            : field.defaultValue;
       return acc;
     }
-    acc[field.name] = field.type === "checkbox" ? false : "";
+    acc[field.name] =
+      field.type === "checkbox" ? false : field.type === "working-hours" ? defaultWorkingHours() : "";
     return acc;
   }, {});
 }
@@ -147,6 +226,11 @@ function parsePayload(fields: AdminField[], state: FormState, partial: boolean) 
 
     if (field.type === "checkbox") {
       payload[field.name] = Boolean(raw);
+      continue;
+    }
+
+    if (field.type === "working-hours") {
+      payload[field.name] = serializeWorkingHours(raw);
       continue;
     }
 
@@ -284,6 +368,48 @@ function FieldInput({
   onChange: (value: unknown) => void;
   options?: SelectOption[];
 }) {
+  if (field.type === "working-hours") {
+    const rows = normalizeWorkingHours(value);
+
+    function updateRow(index: number, patch: Partial<(typeof rows)[number]>) {
+      onChange(rows.map((row, rowIndex) => (rowIndex === index ? { ...row, ...patch } : row)));
+    }
+
+    return (
+      <div className={`working-hours-editor ${field.wide ? "wide" : ""}`}>
+        <span className="field-title">{field.label}</span>
+        <div className="working-hours-grid">
+          {rows.map((row, index) => (
+            <div key={row.weekday} className="working-hours-row">
+              <span>{weekDays[row.weekday]}</span>
+              <label className="check-label compact-check">
+                <input
+                  checked={row.is_closed}
+                  type="checkbox"
+                  onChange={(event) => updateRow(index, { is_closed: event.target.checked })}
+                />
+                closed
+              </label>
+              <input
+                disabled={row.is_closed}
+                type="time"
+                value={String(row.opens_at || "").slice(0, 5)}
+                onChange={(event) => updateRow(index, { opens_at: event.target.value })}
+              />
+              <input
+                disabled={row.is_closed}
+                type="time"
+                value={String(row.closes_at || "").slice(0, 5)}
+                onChange={(event) => updateRow(index, { closes_at: event.target.value })}
+              />
+            </div>
+          ))}
+        </div>
+        {field.help ? <span className="json-help">{field.help}</span> : null}
+      </div>
+    );
+  }
+
   if (field.type === "checkbox") {
     return (
       <label className={`check-label ${field.wide ? "wide" : ""}`}>
@@ -347,8 +473,12 @@ function FieldInput({
       {field.label}
       <input
         value={String(value ?? "")}
+        name={field.inputName || field.name}
+        autoComplete={field.autoComplete}
+        data-lpignore={field.autoComplete === "off" ? "true" : undefined}
+        data-form-type={field.autoComplete === "off" ? "other" : undefined}
         placeholder={field.placeholder}
-        type={field.type}
+        type={field.type === "time" ? "time" : field.type}
         onChange={(event) => onChange(event.target.value)}
         required={field.required}
       />
@@ -1007,6 +1137,216 @@ function MenuBrowser({
   );
 }
 
+function OrganizationTools({ organization, request }: { organization: JsonRecord; request: Requester }) {
+  const [date, setDate] = useState("");
+  const [stepMinutes, setStepMinutes] = useState("30");
+  const [availability, setAvailability] = useState<JsonRecord | null>(null);
+  const [slots, setSlots] = useState<JsonRecord | null>(null);
+  const [paymentTypes, setPaymentTypes] = useState<unknown>(null);
+  const [busy, setBusy] = useState("");
+  const [status, setStatus] = useState("");
+  const slug = String(organization.slug || "");
+  const organizationId = String(organization.id || "");
+
+  async function loadAvailability() {
+    if (!slug) return;
+    setBusy("availability");
+    setStatus("Loading availability...");
+    try {
+      setAvailability(await request<JsonRecord>(`/api/v1/organizations/${slug}/availability`));
+      setStatus("Availability loaded.");
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Availability load failed.");
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function loadSlots() {
+    if (!slug) return;
+    setBusy("slots");
+    setStatus("Loading slots...");
+    try {
+      const query = new URLSearchParams({ stepMinutes: stepMinutes || "30" });
+      if (date) query.set("date", date);
+      setSlots(await request<JsonRecord>(`/api/v1/organizations/${slug}/order-time-slots?${query}`));
+      setStatus("Slots loaded.");
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Slots load failed.");
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function loadPaymentTypes() {
+    if (!organizationId) return;
+    setBusy("payment-types");
+    setStatus("Loading IIKO payment types...");
+    try {
+      setPaymentTypes(await request<unknown>(`/api/v1/organizations/admin/${organizationId}/iiko-payment-types`));
+      setStatus("Payment types loaded.");
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Payment types load failed.");
+    } finally {
+      setBusy("");
+    }
+  }
+
+  return (
+    <div className="story-slides">
+      <p className="small muted">Organization tools</p>
+      <div className="tool-grid">
+        <fieldset>
+          <legend>Availability</legend>
+          <button disabled={busy === "availability" || !slug} type="button" onClick={() => void loadAvailability()}>
+            Check availability
+          </button>
+          {availability ? <pre className="record-json">{JSON.stringify(availability, null, 2)}</pre> : null}
+        </fieldset>
+        <fieldset>
+          <legend>Order slots</legend>
+          <div className="form-grid">
+            <label>
+              Date
+              <input value={date} type="date" onChange={(event) => setDate(event.target.value)} />
+            </label>
+            <label>
+              Step minutes
+              <input value={stepMinutes} type="number" min={5} max={240} onChange={(event) => setStepMinutes(event.target.value)} />
+            </label>
+          </div>
+          <div className="panel-actions">
+            <button disabled={busy === "slots" || !slug} type="button" onClick={() => void loadSlots()}>
+              Load slots
+            </button>
+          </div>
+          {slots ? <pre className="record-json">{JSON.stringify(slots, null, 2)}</pre> : null}
+        </fieldset>
+        <fieldset>
+          <legend>IIKO payment types</legend>
+          <button disabled={busy === "payment-types" || !organizationId} type="button" onClick={() => void loadPaymentTypes()}>
+            Load payment types
+          </button>
+          {paymentTypes ? <pre className="record-json">{JSON.stringify(paymentTypes, null, 2)}</pre> : null}
+        </fieldset>
+      </div>
+      <p className="status-line muted">{status}</p>
+    </div>
+  );
+}
+
+function OrderTools({ order, request, onOrderChange }: { order: JsonRecord; request: Requester; onOrderChange: (order: JsonRecord) => void }) {
+  const [paymentEvents, setPaymentEvents] = useState<JsonRecord[]>([]);
+  const [remoteStatus, setRemoteStatus] = useState<JsonRecord | null>(null);
+  const [busy, setBusy] = useState("");
+  const [status, setStatus] = useState("");
+  const orderId = String(order.id || "");
+
+  async function loadFullOrder() {
+    if (!orderId) return;
+    const fresh = await request<JsonRecord>(`/api/v1/orders/admin/${orderId}`);
+    onOrderChange(fresh);
+  }
+
+  async function loadPaymentEvents() {
+    if (!orderId) return;
+    setBusy("payment-events");
+    setStatus("Loading payment events...");
+    try {
+      const events = await request<JsonRecord[]>(`/api/v1/orders/admin/${orderId}/payment-events`);
+      setPaymentEvents(Array.isArray(events) ? events : []);
+      setStatus(`Payment events loaded: ${Array.isArray(events) ? events.length : 0}`);
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Payment events load failed.");
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function loadStatus() {
+    if (!orderId) return;
+    setBusy("status");
+    setStatus("Loading IIKO status...");
+    try {
+      setRemoteStatus(await request<JsonRecord>(`/api/v1/orders/${orderId}/status`));
+      await loadFullOrder();
+      setStatus("Status loaded.");
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Status load failed.");
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function dispatchIiko() {
+    if (!orderId) return;
+    if (!window.confirm(`Dispatch paid order ${orderId} to IIKO?`)) return;
+    setBusy("dispatch");
+    setStatus("Dispatching order...");
+    try {
+      const result = await request<JsonRecord>(`/api/v1/orders/admin/${orderId}/dispatch-iiko`, {
+        method: "POST",
+      });
+      await loadFullOrder();
+      setStatus(`Dispatch result: ${JSON.stringify(result)}`);
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Dispatch failed.");
+    } finally {
+      setBusy("");
+    }
+  }
+
+  return (
+    <div className="story-slides">
+      <p className="small muted">Order tools</p>
+      <div className="panel-actions">
+        <button disabled={busy === "payment-events" || !orderId} type="button" onClick={() => void loadPaymentEvents()}>
+          Payment events
+        </button>
+        <button disabled={busy === "status" || !orderId} type="button" onClick={() => void loadStatus()}>
+          Get IIKO status
+        </button>
+        <button disabled={busy === "dispatch" || !orderId} type="button" onClick={() => void dispatchIiko()}>
+          Dispatch to IIKO
+        </button>
+      </div>
+      {paymentEvents.length ? (
+        <div className="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>createdAt</th>
+                <th>eventType</th>
+                <th>status</th>
+                <th>success</th>
+                <th>processed</th>
+              </tr>
+            </thead>
+            <tbody>
+              {paymentEvents.map((event) => (
+                <tr key={String(event.id)}>
+                  <td>{compact(event.createdAt)}</td>
+                  <td>{compact(event.eventType)}</td>
+                  <td>{compact(event.status)}</td>
+                  <td>{compact(event.success)}</td>
+                  <td>{compact(event.processed)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ) : null}
+      {remoteStatus ? (
+        <>
+          <p className="small muted">IIKO status</p>
+          <pre className="record-json">{JSON.stringify(remoteStatus, null, 2)}</pre>
+        </>
+      ) : null}
+      <p className="status-line muted">{status}</p>
+    </div>
+  );
+}
+
 function BookingImagesEditor({
   booking,
   request,
@@ -1101,6 +1441,7 @@ function ModuleView({ module, request }: { module: AdminModule; request: Request
   const [relationOptions, setRelationOptions] = useState<Record<string, SelectOption[]>>({});
   const [selected, setSelected] = useState<JsonRecord | null>(null);
   const [form, setForm] = useState<FormState>(() => initialForm(module));
+  const [dirtyFields, setDirtyFields] = useState<Set<string>>(() => new Set());
   const [formFiles, setFormFiles] = useState<Record<string, File[]>>({});
   const [formUploadExtras, setFormUploadExtras] = useState<Record<string, FormState>>(() =>
     Object.fromEntries(
@@ -1181,12 +1522,14 @@ function ModuleView({ module, request }: { module: AdminModule; request: Request
   function selectRow(row: JsonRecord) {
     setSelected(row);
     setForm(initialForm(module, row));
+    setDirtyFields(new Set());
     setFormFiles({});
   }
 
   function resetCreate() {
     setSelected(null);
     setForm(initialForm(module));
+    setDirtyFields(new Set());
     setFormFiles({});
     setFormUploadExtras(
       Object.fromEntries(
@@ -1200,15 +1543,32 @@ function ModuleView({ module, request }: { module: AdminModule; request: Request
 
   async function save(event: FormEvent) {
     event.preventDefault();
+    if (module.readOnly) {
+      setStatus("This endpoint is read-only in admin.");
+      return;
+    }
     setBusy(true);
     try {
-      const payload = parsePayload(module.fields, form, Boolean(selected));
-      const path = selected ? module.updatePath(selected) : module.createPath;
+      const fields = selected ? module.fields.filter((field) => dirtyFields.has(field.name)) : module.fields;
+      const payload = parsePayload(fields, form, Boolean(selected));
+      const hasUploads = Object.values(formFiles).some((files) => files.length > 0);
+      if (selected && !Object.keys(payload).length && !hasUploads) {
+        setStatus("No changes to save.");
+        return;
+      }
+      const path = selected ? module.updatePath?.(selected) : module.createPath;
+      if (!path) throw new Error("Save endpoint is not configured.");
       const method = selected ? "PATCH" : "POST";
-      let result = await request<JsonRecord>(path, {
-        method,
-        body: JSON.stringify(payload),
-      });
+      let result =
+        selected && !Object.keys(payload).length
+          ? selected
+          : await request<JsonRecord>(path, {
+              method,
+              body: JSON.stringify(payload),
+            });
+      if (selected && result && typeof result === "object") {
+        result = { ...selected, ...result, ...payload };
+      }
       if (result && typeof result === "object") {
         for (const action of module.uploads || []) {
           const files = formFiles[action.key] || [];
@@ -1234,6 +1594,10 @@ function ModuleView({ module, request }: { module: AdminModule; request: Request
   }
 
   async function remove(row: JsonRecord) {
+    if (module.readOnly || !module.deletePath) {
+      setStatus("Delete is not available for this endpoint.");
+      return;
+    }
     const name = String(row.slug || row.title || row.name || row.id);
     if (!window.confirm(`Удалить ${name}?`)) return;
     setBusy(true);
@@ -1252,9 +1616,11 @@ function ModuleView({ module, request }: { module: AdminModule; request: Request
   return (
     <>
       <div className="link-row">
-        <button className="link-button" onClick={resetCreate}>
-          Создать запись
-        </button>
+        {!module.readOnly ? (
+          <button className="link-button" onClick={resetCreate}>
+            Создать запись
+          </button>
+        ) : null}
         <button className="link-button" onClick={loadRows} disabled={busy}>
           Обновить таблицу
         </button>
@@ -1296,9 +1662,11 @@ function ModuleView({ module, request }: { module: AdminModule; request: Request
                     <button className="link-button" onClick={() => selectRow(row)}>
                       выбрать
                     </button>
-                    <button className="link-button danger" onClick={() => remove(row)}>
-                      удалить
-                    </button>
+                    {!module.readOnly && module.deletePath ? (
+                      <button className="link-button danger" onClick={() => remove(row)}>
+                        удалить
+                      </button>
+                    ) : null}
                   </div>
                 </td>
                 <td>{compact(row[module.idField])}</td>
@@ -1318,7 +1686,8 @@ function ModuleView({ module, request }: { module: AdminModule; request: Request
         </table>
       </div>
 
-      <div className="panels">
+      <div className={`panels ${module.readOnly ? "read-only-panels" : ""}`}>
+        {!module.readOnly ? (
         <form onSubmit={save}>
           <fieldset>
             <legend>{selected ? `Изменить ${selected[module.idField]}` : "Создать запись"}</legend>
@@ -1328,7 +1697,10 @@ function ModuleView({ module, request }: { module: AdminModule; request: Request
                   key={field.name}
                   field={field}
                   value={form[field.name]}
-                  onChange={(value) => setForm((current) => ({ ...current, [field.name]: value }))}
+                  onChange={(value) => {
+                    setForm((current) => ({ ...current, [field.name]: value }));
+                    setDirtyFields((current) => new Set(current).add(field.name));
+                  }}
                   options={relationOptions[field.name]}
                 />
               ))}
@@ -1388,6 +1760,7 @@ function ModuleView({ module, request }: { module: AdminModule; request: Request
             <p className="status-line muted">{status}</p>
           </fieldset>
         </form>
+        ) : null}
 
         <fieldset>
           <legend>Выбранная запись ({selected ? "1" : "0"})</legend>
@@ -1421,6 +1794,12 @@ function ModuleView({ module, request }: { module: AdminModule; request: Request
                   onBookingChange={selectRow}
                   onDone={loadRows}
                 />
+              ) : null}
+              {module.supportsOrganizationTools ? (
+                <OrganizationTools organization={selected} request={request} />
+              ) : null}
+              {module.supportsOrderTools ? (
+                <OrderTools order={selected} request={request} onOrderChange={selectRow} />
               ) : null}
               {module.details?.map((detail) => (
                 <div key={detail.name}>
