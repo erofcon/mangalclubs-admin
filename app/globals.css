@@ -557,6 +557,91 @@ tbody tr:hover {
   white-space: pre-wrap;
 }
 
+.media-link {
+  align-items: center;
+  display: inline-flex;
+  gap: 6px;
+  max-width: 260px;
+  vertical-align: top;
+}
+
+.media-link span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.thumb {
+  border: 1px solid var(--line);
+  display: block;
+  height: 34px;
+  object-fit: cover;
+  width: 46px;
+}
+
+.analytics-panel {
+  margin-bottom: 16px;
+}
+
+.metric-grid {
+  display: grid;
+  gap: 8px;
+  grid-template-columns: repeat(4, minmax(120px, 1fr));
+  margin-bottom: 10px;
+}
+
+.metric {
+  border: 1px solid var(--line);
+  display: grid;
+  gap: 3px;
+  padding: 7px 8px;
+}
+
+.metric span {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.metric strong {
+  font-size: 19px;
+  font-weight: 700;
+}
+
+.analytics-grid {
+  align-items: start;
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(3, minmax(220px, 1fr));
+  margin-bottom: 10px;
+}
+
+.stat-list {
+  border: 1px solid var(--line);
+  display: grid;
+  gap: 1px;
+  padding: 7px;
+}
+
+.stat-list p {
+  margin: 0 0 5px;
+}
+
+.stat-row {
+  align-items: center;
+  background: #fff;
+  border: 0;
+  border-top: 1px solid var(--line);
+  display: flex;
+  justify-content: space-between;
+  min-height: 24px;
+  padding: 3px 2px;
+  text-align: left;
+  width: 100%;
+}
+
+.stat-row span {
+  overflow-wrap: anywhere;
+}
+
 .mobile-menu {
   display: none;
 }
@@ -631,6 +716,8 @@ tbody tr:hover {
   .panels,
   .menu-browser-grid,
   .tool-grid,
+  .analytics-grid,
+  .metric-grid,
   .form-grid,
   .login-grid {
     grid-template-columns: 1fr;

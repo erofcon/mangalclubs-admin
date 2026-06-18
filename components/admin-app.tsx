@@ -82,6 +82,35 @@ function stringify(value: unknown) {
   return String(value);
 }
 
+function mediaHref(value: unknown) {
+  const text = String(value ?? "").trim();
+  if (!text) return "";
+  if (/^https?:\/\//i.test(text)) return text;
+  if (text.startsWith("/api/proxy/")) return text;
+  if (text.startsWith("/")) return `/api/proxy${text}`;
+  return "";
+}
+
+function isImageHref(value: unknown) {
+  const href = mediaHref(value);
+  if (!href) return false;
+  return /\.(avif|gif|jpe?g|png|webp)(\?.*)?$/i.test(href) || /\/media\//i.test(href);
+}
+
+function compactMedia(value: unknown) {
+  const href = mediaHref(value);
+  const text = String(value ?? "");
+  if (!href) return compact(value);
+
+  return (
+    <a className="media-link" href={href} target="_blank" rel="noreferrer">
+      {/* eslint-disable-next-line @next/next/no-img-element */}
+      {isImageHref(value) ? <img className="thumb" src={href} alt="" loading="lazy" /> : null}
+      <span>{text.length > 42 ? `${text.slice(0, 39)}...` : text}</span>
+    </a>
+  );
+}
+
 function normalizeTimeInput(value: unknown) {
   const text = String(value ?? "").trim();
   return text.length === 5 ? `${text}:00` : text;
@@ -129,9 +158,9 @@ function compact(value: unknown) {
   if (Array.isArray(value)) return <span>{value.length} items</span>;
   if (typeof value === "object") return <span>{JSON.stringify(value)}</span>;
   const text = String(value);
-  if (text.startsWith("http")) {
+  if (mediaHref(text)) {
     return (
-      <a href={text} target="_blank" rel="noreferrer">
+      <a href={mediaHref(text)} target="_blank" rel="noreferrer">
         {text.length > 42 ? `${text.slice(0, 39)}...` : text}
       </a>
     );
@@ -214,7 +243,49 @@ function displayValue(value: unknown) {
   if (value && typeof value === "object" && !Array.isArray(value)) {
     return optionLabel(value as JsonRecord, ["title", "name", "slug"]);
   }
+  if (typeof value === "string" && mediaHref(value)) return compactMedia(value);
   return compact(value);
+}
+
+function numberValue(value: unknown) {
+  const number = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(number) ? number : 0;
+}
+
+function money(value: unknown) {
+  return numberValue(value).toLocaleString("ru-RU", {
+    maximumFractionDigits: 2,
+    minimumFractionDigits: 0,
+  });
+}
+
+function isProblemOrder(order: JsonRecord) {
+  const paymentStatus = String(order.paymentStatus || "").toLowerCase();
+  const creationStatus = String(order.creationStatus || "").toLowerCase();
+  const orderStatus = String(order.orderStatus || "").toLowerCase();
+
+  return (
+    paymentStatus.includes("failed") ||
+    paymentStatus.includes("cancel") ||
+    paymentStatus.includes("expired") ||
+    creationStatus === "error" ||
+    orderStatus === "cancelled" ||
+    Boolean(order.errorInfo || order.paymentErrorInfo)
+  );
+}
+
+function countBy(rows: JsonRecord[], field: string) {
+  return rows.reduce<Record<string, number>>((acc, row) => {
+    const key = String(row[field] ?? "NULL");
+    acc[key] = (acc[key] || 0) + 1;
+    return acc;
+  }, {});
+}
+
+function topEntries(record: Record<string, number>, limit = 8) {
+  return Object.entries(record)
+    .sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))
+    .slice(0, limit);
 }
 
 function parsePayload(fields: AdminField[], state: FormState, partial: boolean) {
@@ -516,7 +587,7 @@ function UploadControl({
       const result = await uploadActionFiles(action, row, files, extraState, request);
       setStatus("Готово");
       setFiles([]);
-      onDone(result);
+      await onDone(result);
     } catch (error) {
       setStatus(error instanceof Error ? error.message : "Ошибка загрузки.");
     } finally {
@@ -1241,6 +1312,7 @@ function OrderTools({ order, request, onOrderChange }: { order: JsonRecord; requ
   const [busy, setBusy] = useState("");
   const [status, setStatus] = useState("");
   const orderId = String(order.id || "");
+  const publicNumber = String(order.publicNumber || "");
 
   async function loadFullOrder() {
     if (!orderId) return;
@@ -1253,7 +1325,10 @@ function OrderTools({ order, request, onOrderChange }: { order: JsonRecord; requ
     setBusy("payment-events");
     setStatus("Loading payment events...");
     try {
-      const events = await request<JsonRecord[]>(`/api/v1/orders/admin/${orderId}/payment-events`);
+      const eventPath = publicNumber
+        ? `/api/v1/orders/admin/by-number/${encodeURIComponent(publicNumber)}/payment-events`
+        : `/api/v1/orders/admin/${orderId}/payment-events`;
+      const events = await request<JsonRecord[]>(eventPath);
       setPaymentEvents(Array.isArray(events) ? events : []);
       setStatus(`Payment events loaded: ${Array.isArray(events) ? events.length : 0}`);
     } catch (error) {
@@ -1358,7 +1433,12 @@ function BookingImagesEditor({
   onBookingChange: (booking: JsonRecord) => void;
   onDone: () => void | Promise<void>;
 }) {
-  const images = Array.isArray(booking.images) ? (booking.images as JsonRecord[]) : [];
+  const horizontalImages = Array.isArray(booking.horizontal_images) ? (booking.horizontal_images as JsonRecord[]) : [];
+  const verticalImages = Array.isArray(booking.vertical_images) ? (booking.vertical_images as JsonRecord[]) : [];
+  const images: JsonRecord[] = [
+    ...horizontalImages.map((image) => ({ ...image, orientation: image.orientation || "horizontal" })),
+    ...verticalImages.map((image) => ({ ...image, orientation: image.orientation || "vertical" })),
+  ];
   const [busyId, setBusyId] = useState("");
   const [status, setStatus] = useState("");
 
@@ -1415,7 +1495,7 @@ function BookingImagesEditor({
                       delete
                     </button>
                   </td>
-                  <td>{compact(image.url)}</td>
+                  <td>{compactMedia(image.url)}</td>
                   <td>{compact(image.orientation)}</td>
                   <td>{compact(image.sort_order)}</td>
                 </tr>
@@ -1433,6 +1513,231 @@ function BookingImagesEditor({
       </div>
       <p className="status-line muted">{status}</p>
     </div>
+  );
+}
+
+function OrderAnalytics({
+  rows,
+  request,
+  onSelect,
+  onRowsChange,
+  onStatus,
+}: {
+  rows: JsonRecord[];
+  request: Requester;
+  onSelect: (row: JsonRecord) => void;
+  onRowsChange: (rows: JsonRecord[]) => void;
+  onStatus: (status: string) => void;
+}) {
+  const [publicNumber, setPublicNumber] = useState("");
+  const [limit, setLimit] = useState("100");
+  const [offset, setOffset] = useState("0");
+  const [busy, setBusy] = useState("");
+  const [localFilter, setLocalFilter] = useState("");
+  const [status, setStatus] = useState("");
+
+  const problemOrders = useMemo(() => rows.filter(isProblemOrder), [rows]);
+  const paidOrders = useMemo(() => rows.filter((row) => row.paymentStatus === "paid"), [rows]);
+  const totalRevenue = useMemo(
+    () => paidOrders.reduce((sum, row) => sum + numberValue(row.paymentAmountKopecks) / 100, 0),
+    [paidOrders],
+  );
+  const filteredProblems = useMemo(() => {
+    const q = localFilter.trim().toLowerCase();
+    if (!q) return problemOrders.slice(0, 12);
+    return problemOrders.filter((row) => JSON.stringify(row).toLowerCase().includes(q)).slice(0, 12);
+  }, [localFilter, problemOrders]);
+
+  const paymentStats = topEntries(countBy(rows, "paymentStatus"));
+  const creationStats = topEntries(countBy(rows, "creationStatus"));
+  const organizationStats = topEntries(countBy(rows, "organizationSlug"), 6);
+
+  async function searchByNumber(event: FormEvent) {
+    event.preventDefault();
+    const query = publicNumber.trim();
+    if (!query) {
+      setStatus("Введите номер заказа.");
+      return;
+    }
+
+    setBusy("number");
+    setStatus("Ищу заказ...");
+    try {
+      const order = await request<JsonRecord>(`/api/v1/orders/admin/by-number/${encodeURIComponent(query)}`);
+      onSelect(order);
+      setStatus(`Найден заказ ${order.publicNumber || order.id}.`);
+      onStatus("Заказ найден по публичному номеру.");
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Заказ не найден.");
+    } finally {
+      setBusy("");
+    }
+  }
+
+  async function loadWindow() {
+    const nextLimit = Math.max(1, Math.min(200, Number.parseInt(limit || "100", 10) || 100));
+    const nextOffset = Math.max(0, Number.parseInt(offset || "0", 10) || 0);
+    setBusy("window");
+    setStatus("Загружаю выборку заказов...");
+    try {
+      const query = new URLSearchParams({ limit: String(nextLimit), offset: String(nextOffset) });
+      const data = await request<JsonRecord[]>(`/api/v1/orders/admin?${query}`);
+      onRowsChange(Array.isArray(data) ? data : []);
+      setLimit(String(nextLimit));
+      setOffset(String(nextOffset));
+      setStatus(`Загружено заказов: ${Array.isArray(data) ? data.length : 0}.`);
+      onStatus(`Загружено заказов: ${Array.isArray(data) ? data.length : 0}.`);
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : "Не удалось загрузить заказы.");
+    } finally {
+      setBusy("");
+    }
+  }
+
+  return (
+    <fieldset className="analytics-panel">
+      <legend>Аналитика заказов</legend>
+      <div className="metric-grid">
+        <div className="metric">
+          <span>Заказов в выборке</span>
+          <strong>{rows.length}</strong>
+        </div>
+        <div className="metric">
+          <span>Оплачено</span>
+          <strong>{paidOrders.length}</strong>
+        </div>
+        <div className="metric">
+          <span>Проблемные</span>
+          <strong className={problemOrders.length ? "danger" : "ok"}>{problemOrders.length}</strong>
+        </div>
+        <div className="metric">
+          <span>Сумма paid</span>
+          <strong>{money(totalRevenue)} ₽</strong>
+        </div>
+      </div>
+
+      <div className="analytics-grid">
+        <form className="nested-form" onSubmit={searchByNumber}>
+          <p className="small muted">Быстрый поиск</p>
+          <div className="form-grid">
+            <label className="wide">
+              Public number
+              <input
+                value={publicNumber}
+                onChange={(event) => setPublicNumber(event.target.value)}
+                placeholder="Например 000123"
+              />
+            </label>
+          </div>
+          <div className="panel-actions">
+            <button disabled={busy === "number"} type="submit">
+              Найти заказ
+            </button>
+          </div>
+        </form>
+
+        <div className="nested-form">
+          <p className="small muted">Окно данных</p>
+          <div className="form-grid">
+            <label>
+              Limit
+              <input value={limit} type="number" min={1} max={200} onChange={(event) => setLimit(event.target.value)} />
+            </label>
+            <label>
+              Offset
+              <input value={offset} type="number" min={0} onChange={(event) => setOffset(event.target.value)} />
+            </label>
+          </div>
+          <div className="panel-actions">
+            <button disabled={busy === "window"} type="button" onClick={() => void loadWindow()}>
+              Загрузить
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div className="analytics-grid">
+        <div className="stat-list">
+          <p className="small muted">Payment status</p>
+          {paymentStats.map(([name, count]) => (
+            <button key={name} className="stat-row" type="button" onClick={() => setLocalFilter(name === "NULL" ? "" : name)}>
+              <span>{name}</span>
+              <strong>{count}</strong>
+            </button>
+          ))}
+        </div>
+        <div className="stat-list">
+          <p className="small muted">Creation status</p>
+          {creationStats.map(([name, count]) => (
+            <button key={name} className="stat-row" type="button" onClick={() => setLocalFilter(name === "NULL" ? "" : name)}>
+              <span>{name}</span>
+              <strong>{count}</strong>
+            </button>
+          ))}
+        </div>
+        <div className="stat-list">
+          <p className="small muted">Филиалы</p>
+          {organizationStats.map(([name, count]) => (
+            <button key={name} className="stat-row" type="button" onClick={() => setLocalFilter(name === "NULL" ? "" : name)}>
+              <span>{name}</span>
+              <strong>{count}</strong>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="toolbar compact-toolbar">
+        <label>
+          Фильтр проблемных заказов
+          <input value={localFilter} onChange={(event) => setLocalFilter(event.target.value)} placeholder="status, phone, branch" />
+        </label>
+        <button type="button" onClick={() => setLocalFilter("")}>
+          Сбросить
+        </button>
+      </div>
+      <div className="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Действие</th>
+              <th>publicNumber</th>
+              <th>createdAt</th>
+              <th>organization</th>
+              <th>phone</th>
+              <th>payment</th>
+              <th>creation</th>
+              <th>order</th>
+            </tr>
+          </thead>
+          <tbody>
+            {filteredProblems.map((order) => (
+              <tr key={String(order.id)}>
+                <td>
+                  <button className="link-button" type="button" onClick={() => onSelect(order)}>
+                    открыть
+                  </button>
+                </td>
+                <td>{compact(order.publicNumber)}</td>
+                <td>{compact(order.createdAt)}</td>
+                <td>{compact(order.organizationSlug)}</td>
+                <td>{compact(order.phone)}</td>
+                <td>{compact(order.paymentStatus)}</td>
+                <td>{compact(order.creationStatus)}</td>
+                <td>{compact(order.orderStatus)}</td>
+              </tr>
+            ))}
+            {!filteredProblems.length ? (
+              <tr>
+                <td colSpan={8} className="muted">
+                  В текущей выборке проблемных заказов нет.
+                </td>
+              </tr>
+            ) : null}
+          </tbody>
+        </table>
+      </div>
+      <p className="status-line muted">{status}</p>
+    </fieldset>
   );
 }
 
@@ -1630,6 +1935,15 @@ function ModuleView({ module, request }: { module: AdminModule; request: Request
       </div>
 
       {module.supportsMenuBrowser ? <MenuBrowser request={request} onDone={loadRows} /> : null}
+      {module.supportsOrderAnalytics ? (
+        <OrderAnalytics
+          rows={rows}
+          request={request}
+          onSelect={selectRow}
+          onRowsChange={setRows}
+          onStatus={setStatus}
+        />
+      ) : null}
 
       <h2 className="section-title">Таблица: {module.tableName}</h2>
       <div className="toolbar">
@@ -1774,7 +2088,10 @@ function ModuleView({ module, request }: { module: AdminModule; request: Request
                       action={action}
                       row={selected}
                       request={request}
-                      onDone={loadRows}
+                      onDone={async (record) => {
+                        if (record) selectRow(record);
+                        await loadRows();
+                      }}
                     />
                   ))}
                 </div>

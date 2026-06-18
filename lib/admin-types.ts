@@ -85,4 +85,5 @@ export type AdminModule = {
   supportsBookingImages?: boolean;
   supportsOrganizationTools?: boolean;
   supportsOrderTools?: boolean;
+  supportsOrderAnalytics?: boolean;
 };

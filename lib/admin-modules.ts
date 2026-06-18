@@ -16,15 +16,16 @@ export const adminModules: AdminModule[] = [
     updatePath: (row) => `/api/v1/organizations/${row.id}`,
     deletePath: (row) => `/api/v1/organizations/${row.id}`,
     idField: "id",
-    columns: ["slug", "name", "city", "address", "phone", "photo_url"],
+    columns: ["slug", "name", "city", "address", "phone", "whatsapp_phone", "photo_url", "payment_configured"],
     fields: [
       { name: "slug", label: "Slug", type: "text", required: true },
       { name: "name", label: "Name", type: "text", required: true },
       { name: "city", label: "City", type: "text", required: true },
       { name: "address", label: "Address", type: "text", required: true, wide: true },
       { name: "phone", label: "Phone", type: "text", required: true },
+      { name: "whatsapp_phone", label: "WhatsApp phone", type: "text", emptyAsNull: true },
       { name: "intro", label: "Intro", type: "textarea", required: true, wide: true },
-      { name: "photo_url", label: "Photo URL", type: "text", emptyAsNull: true, wide: true },
+      { name: "photo_url", label: "Photo URL (optional external)", type: "text", emptyAsNull: true, wide: true },
       {
         name: "iiko_api_login",
         label: "IIKO API login",
@@ -121,6 +122,7 @@ export const adminModules: AdminModule[] = [
       },
       { name: "title", label: "Title", type: "text", required: true },
       { name: "description", label: "Description", type: "textarea", emptyAsNull: true, wide: true },
+      { name: "preview_url", label: "Preview URL (optional external)", type: "text", emptyAsNull: true, wide: true },
       ...activeSort,
     ],
     uploads: [
@@ -143,7 +145,7 @@ export const adminModules: AdminModule[] = [
     updatePath: (row) => `/api/v1/bookings/${row.id}`,
     deletePath: (row) => `/api/v1/bookings/${row.id}`,
     idField: "id",
-    columns: ["title", "organization", "category", "preview_url", "sort_order", "is_active"],
+    columns: ["title", "organization", "category", "preview_url", "horizontal_images", "vertical_images", "sort_order", "is_active"],
     fields: [
       {
         name: "organization_id",
@@ -162,7 +164,7 @@ export const adminModules: AdminModule[] = [
       { name: "title", label: "Title", type: "text", required: true },
       { name: "description", label: "Description", type: "textarea", required: true, wide: true },
       { name: "long_description", label: "Long description", type: "textarea", emptyAsNull: true, wide: true },
-      { name: "preview_url", label: "Preview URL", type: "text", emptyAsNull: true, wide: true },
+      { name: "preview_url", label: "Preview URL (optional external)", type: "text", emptyAsNull: true, wide: true },
       ...activeSort,
     ],
     uploads: [
@@ -174,49 +176,28 @@ export const adminModules: AdminModule[] = [
         accept: "image/*",
       },
       {
-        key: "image",
-        label: "Добавить image",
-        path: (row) => `/api/v1/bookings/${row.id}/images`,
-        fieldName: "image",
-        accept: "image/*",
-        extraFields: [
-          {
-            name: "orientation",
-            label: "Orientation",
-            type: "select",
-            defaultValue: "horizontal",
-            options: [
-              { label: "horizontal", value: "horizontal" },
-              { label: "vertical", value: "vertical" },
-            ],
-          },
-          { name: "alt_text", label: "Alt text", type: "text", emptyAsNull: true },
-          { name: "sort_order", label: "Sort", type: "number", parser: "integer", defaultValue: 0 },
-        ],
-      },
-      {
-        key: "images",
-        label: "Добавить images bulk",
-        path: (row) => `/api/v1/bookings/${row.id}/images/bulk`,
+        key: "horizontal-images",
+        label: "Добавить horizontal images",
+        path: (row) => `/api/v1/bookings/${row.id}/images/horizontal`,
         fieldName: "images",
         multiple: true,
         accept: "image/*",
-        extraFields: [
-          {
-            name: "orientation",
-            label: "Orientation",
-            type: "select",
-            defaultValue: "horizontal",
-            options: [
-              { label: "horizontal", value: "horizontal" },
-              { label: "vertical", value: "vertical" },
-            ],
-          },
-          { name: "sort_order", label: "Sort from", type: "number", parser: "integer", defaultValue: 0 },
-        ],
+        extraFields: [{ name: "sort_order", label: "Sort from", type: "number", parser: "integer", defaultValue: 0 }],
+      },
+      {
+        key: "vertical-images",
+        label: "Добавить vertical images",
+        path: (row) => `/api/v1/bookings/${row.id}/images/vertical`,
+        fieldName: "images",
+        multiple: true,
+        accept: "image/*",
+        extraFields: [{ name: "sort_order", label: "Sort from", type: "number", parser: "integer", defaultValue: 0 }],
       },
     ],
-    details: [{ label: "Images", name: "images" }],
+    details: [
+      { label: "Horizontal images", name: "horizontal_images" },
+      { label: "Vertical images", name: "vertical_images" },
+    ],
     supportsBookingImages: true,
   },
   {
@@ -232,7 +213,7 @@ export const adminModules: AdminModule[] = [
     columns: ["distance_from_km", "distance_to_km", "price"],
     fields: [
       { name: "distance_from_km", label: "From km", type: "number", required: true, parser: "number" },
-      { name: "distance_to_km", label: "To km", type: "number", required: true, parser: "number" },
+      { name: "distance_to_km", label: "To km", type: "number", emptyAsNull: true, parser: "number" },
       { name: "price", label: "Price", type: "number", required: true, parser: "integer" },
     ],
   },
@@ -252,7 +233,7 @@ export const adminModules: AdminModule[] = [
       { name: "sku", label: "SKU", type: "text", emptyAsNull: true },
       { name: "name_override", label: "Name override", type: "text", emptyAsNull: true },
       { name: "description", label: "Description", type: "textarea", emptyAsNull: true, wide: true },
-      { name: "image_url", label: "Image URL", type: "text", emptyAsNull: true, wide: true },
+      { name: "image_url", label: "Image URL (optional external)", type: "text", emptyAsNull: true, wide: true },
       ...activeSort,
     ],
     uploads: [
@@ -274,6 +255,7 @@ export const adminModules: AdminModule[] = [
     listPath: "/api/v1/orders/admin",
     idField: "id",
     columns: [
+      "publicNumber",
       "createdAt",
       "organizationSlug",
       "orderType",
@@ -296,6 +278,7 @@ export const adminModules: AdminModule[] = [
       { label: "Error info", name: "errorInfo" },
     ],
     supportsOrderTools: true,
+    supportsOrderAnalytics: true,
   },
   {
     key: "stories",
@@ -311,7 +294,7 @@ export const adminModules: AdminModule[] = [
     fields: [
       { name: "slug", label: "Slug", type: "text", required: true },
       { name: "title", label: "Title", type: "text", required: true },
-      { name: "preview_url", label: "Preview URL", type: "text", emptyAsNull: true, wide: true },
+      { name: "preview_url", label: "Preview URL (optional external)", type: "text", emptyAsNull: true, wide: true },
       { name: "description", label: "Description", type: "textarea", emptyAsNull: true, wide: true },
       ...activeSort,
     ],
