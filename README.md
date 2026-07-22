@@ -1,5 +1,15 @@
 This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
 
+## Environment
+
+Create `.env.local` for local development and set the same variable in the production deployment:
+
+```bash
+MANGALCLUBS_API_URL=https://api.mangalclubs.ru
+```
+
+The admin app sends browser requests to `/api/proxy/...`; the Next.js server forwards them to `MANGALCLUBS_API_URL`.
+
 ## Getting Started
 
 First, run the development server:

@@ -1,5 +1,7 @@
 import { NextRequest } from "next/server";
 
+export const runtime = "nodejs";
+
 type RouteContext = {
   params: Promise<{ path: string[] }> | { path: string[] };
 };
@@ -18,11 +20,23 @@ const HOP_BY_HOP_HEADERS = new Set([
 ]);
 
 function apiBaseUrl() {
-  const value = process.env.MANGALCLUBS_API_URL || process.env.API_BASE_URL;
+  const value = (process.env.MANGALCLUBS_API_URL || process.env.API_BASE_URL)?.trim();
   if (!value) {
-    throw new Error("Set MANGALCLUBS_API_URL in .env.local");
+    throw new Error("Set MANGALCLUBS_API_URL to https://api.mangalclubs.ru");
   }
-  return value.replace(/\/+$/, "");
+
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    throw new Error("MANGALCLUBS_API_URL must be an absolute URL, for example https://api.mangalclubs.ru");
+  }
+
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    throw new Error("MANGALCLUBS_API_URL must start with http:// or https://");
+  }
+
+  return url.toString().replace(/\/+$/, "");
 }
 
 async function proxy(request: NextRequest, context: RouteContext) {
@@ -55,14 +69,15 @@ async function proxy(request: NextRequest, context: RouteContext) {
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : "API proxy request failed";
-    const status = message.includes("MANGALCLUBS_API_URL") ? 500 : 502;
+    const isConfigError = message.includes("MANGALCLUBS_API_URL");
+    const status = isConfigError ? 500 : 502;
 
     return Response.json(
       {
         message,
         detail:
-          status === 500
-            ? "Create .env.local and set MANGALCLUBS_API_URL=http://localhost:8000"
+          isConfigError
+            ? "Set MANGALCLUBS_API_URL=https://api.mangalclubs.ru in the Next.js deployment environment."
             : "Check that the backend API is running and reachable from the Next.js server.",
       },
       { status },

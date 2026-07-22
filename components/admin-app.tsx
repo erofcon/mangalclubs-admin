@@ -332,6 +332,84 @@ function parsePayload(fields: AdminField[], state: FormState, partial: boolean) 
   return payload;
 }
 
+function hasOwn(record: JsonRecord | FormState, key: string) {
+  return Object.prototype.hasOwnProperty.call(record, key);
+}
+
+function nextValue(payload: JsonRecord, state: FormState, selected: JsonRecord | null, key: string) {
+  if (hasOwn(payload, key)) return payload[key];
+  if (hasOwn(state, key)) return state[key];
+  return selected?.[key];
+}
+
+function textValue(value: unknown) {
+  if (value === null || value === undefined) return "";
+  return String(value).trim();
+}
+
+function booleanValue(value: unknown) {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "number") return value !== 0;
+  if (typeof value === "string") return ["1", "true", "yes", "on"].includes(value.trim().toLowerCase());
+  return Boolean(value);
+}
+
+function finiteNumberOrNull(value: unknown) {
+  if (value === null || value === undefined || value === "") return null;
+  const parsed = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function relationById(relationRows: Record<string, JsonRecord[]>, fieldName: string, id: unknown) {
+  const target = textValue(id);
+  if (!target) return undefined;
+  return relationRows[fieldName]?.find((row) => textValue(row.id) === target);
+}
+
+function validateBeforeSave(
+  module: AdminModule,
+  state: FormState,
+  payload: JsonRecord,
+  selected: JsonRecord | null,
+  relationRows: Record<string, JsonRecord[]>,
+) {
+  if (module.key === "organizations") {
+    const acceptsDelivery = booleanValue(nextValue(payload, state, selected, "accepts_delivery"));
+    const isDefaultDelivery = booleanValue(nextValue(payload, state, selected, "is_default_delivery"));
+    if (isDefaultDelivery && !acceptsDelivery) {
+      return "Default delivery requires Accepts delivery.";
+    }
+  }
+
+  if (module.key === "bookings") {
+    const organizationId = textValue(nextValue(payload, state, selected, "organization_id"));
+    const categoryId = textValue(nextValue(payload, state, selected, "category_id"));
+    const category = relationById(relationRows, "category_id", categoryId);
+    const categoryOrganizationId = textValue(category?.organization_id);
+    if (organizationId && categoryOrganizationId && organizationId !== categoryOrganizationId) {
+      return "Booking category belongs to another organization.";
+    }
+  }
+
+  if (module.key === "delivery-zones") {
+    const distanceFrom = finiteNumberOrNull(nextValue(payload, state, selected, "distance_from_km"));
+    const distanceTo = finiteNumberOrNull(nextValue(payload, state, selected, "distance_to_km"));
+    if (distanceFrom !== null && distanceTo !== null && distanceTo <= distanceFrom) {
+      return "Distance To must be greater than From.";
+    }
+  }
+
+  if (module.key === "menu-items") {
+    const iikoItemId = textValue(nextValue(payload, state, selected, "iiko_item_id"));
+    const sku = textValue(nextValue(payload, state, selected, "sku"));
+    if (!iikoItemId && !sku) {
+      return "Enter IIKO item ID or SKU.";
+    }
+  }
+
+  return "";
+}
+
 function toFiles(files: FileList | null) {
   return Array.from(files || []);
 }
@@ -1744,6 +1822,7 @@ function OrderAnalytics({
 function ModuleView({ module, request }: { module: AdminModule; request: Requester }) {
   const [rows, setRows] = useState<JsonRecord[]>([]);
   const [relationOptions, setRelationOptions] = useState<Record<string, SelectOption[]>>({});
+  const [relationRows, setRelationRows] = useState<Record<string, JsonRecord[]>>({});
   const [selected, setSelected] = useState<JsonRecord | null>(null);
   const [form, setForm] = useState<FormState>(() => initialForm(module));
   const [dirtyFields, setDirtyFields] = useState<Set<string>>(() => new Set());
@@ -1784,10 +1863,12 @@ function ModuleView({ module, request }: { module: AdminModule; request: Request
     const fields = module.fields.filter((field) => field.relation);
     if (!fields.length) {
       setRelationOptions({});
+      setRelationRows({});
       return;
     }
 
     const nextOptions: Record<string, SelectOption[]> = {};
+    const nextRows: Record<string, JsonRecord[]> = {};
 
     await Promise.all(
       fields.map(async (field) => {
@@ -1797,20 +1878,24 @@ function ModuleView({ module, request }: { module: AdminModule; request: Request
 
         try {
           const data = await request<JsonRecord[]>(relatedModule.listPath);
+          const relationData = Array.isArray(data) ? data : [];
           const valueField = relation.valueField || relatedModule.idField;
           const labelFields = relation.labelFields || ["name", "title", "slug"];
 
-          nextOptions[field.name] = (Array.isArray(data) ? data : []).map((row) => ({
+          nextRows[field.name] = relationData;
+          nextOptions[field.name] = relationData.map((row) => ({
             value: String(row[valueField] ?? ""),
             label: optionLabel(row, labelFields),
           }));
         } catch {
+          nextRows[field.name] = [];
           nextOptions[field.name] = [];
         }
       }),
     );
 
     setRelationOptions(nextOptions);
+    setRelationRows(nextRows);
   }
 
   useEffect(() => {
@@ -1852,15 +1937,22 @@ function ModuleView({ module, request }: { module: AdminModule; request: Request
       setStatus("This endpoint is read-only in admin.");
       return;
     }
+
+    const fields = selected ? module.fields.filter((field) => dirtyFields.has(field.name)) : module.fields;
+    const payload = parsePayload(fields, form, Boolean(selected));
+    const hasUploads = Object.values(formFiles).some((files) => files.length > 0);
+    if (selected && !Object.keys(payload).length && !hasUploads) {
+      setStatus("No changes to save.");
+      return;
+    }
+    const validationError = validateBeforeSave(module, form, payload, selected, relationRows);
+    if (validationError) {
+      setStatus(validationError);
+      return;
+    }
+
     setBusy(true);
     try {
-      const fields = selected ? module.fields.filter((field) => dirtyFields.has(field.name)) : module.fields;
-      const payload = parsePayload(fields, form, Boolean(selected));
-      const hasUploads = Object.values(formFiles).some((files) => files.length > 0);
-      if (selected && !Object.keys(payload).length && !hasUploads) {
-        setStatus("No changes to save.");
-        return;
-      }
       const path = selected ? module.updatePath?.(selected) : module.createPath;
       if (!path) throw new Error("Save endpoint is not configured.");
       const method = selected ? "PATCH" : "POST";
