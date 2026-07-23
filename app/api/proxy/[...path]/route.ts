@@ -19,6 +19,8 @@ const HOP_BY_HOP_HEADERS = new Set([
   "upgrade",
 ]);
 
+const FORWARDED_HEADERS = new Set(["accept", "authorization", "content-type"]);
+
 function apiBaseUrl() {
   const value = (process.env.MANGALCLUBS_API_URL || process.env.API_BASE_URL)?.trim();
   if (!value) {
@@ -39,6 +41,18 @@ function apiBaseUrl() {
   return url.toString().replace(/\/+$/, "");
 }
 
+function proxyHeaders(requestHeaders: Headers) {
+  const headers = new Headers();
+
+  for (const [name, value] of requestHeaders) {
+    const lowerName = name.toLowerCase();
+    if (HOP_BY_HOP_HEADERS.has(lowerName) || !FORWARDED_HEADERS.has(lowerName)) continue;
+    headers.set(name, value);
+  }
+
+  return headers;
+}
+
 async function proxy(request: NextRequest, context: RouteContext) {
   try {
     const params = await Promise.resolve(context.params);
@@ -46,8 +60,7 @@ async function proxy(request: NextRequest, context: RouteContext) {
     const sourceUrl = new URL(request.url);
     const targetUrl = `${apiBaseUrl()}/${path}${sourceUrl.search}`;
 
-    const headers = new Headers(request.headers);
-    for (const header of HOP_BY_HOP_HEADERS) headers.delete(header);
+    const headers = proxyHeaders(request.headers);
 
     const hasBody = request.method !== "GET" && request.method !== "HEAD";
     const response = await fetch(targetUrl, {
