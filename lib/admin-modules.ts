@@ -145,7 +145,7 @@ export const adminModules: AdminModule[] = [
     updatePath: (row) => `/api/v1/bookings/${row.id}`,
     deletePath: (row) => `/api/v1/bookings/${row.id}`,
     idField: "id",
-    columns: ["title", "organization", "category", "preview_url", "horizontal_images", "vertical_images", "sort_order", "is_active"],
+    columns: ["title", "organization", "category", "preview_url", "images", "sort_order", "is_active"],
     fields: [
       {
         name: "organization_id",
@@ -176,18 +176,9 @@ export const adminModules: AdminModule[] = [
         accept: "image/*",
       },
       {
-        key: "horizontal-images",
-        label: "Добавить horizontal images",
-        path: (row) => `/api/v1/bookings/${row.id}/images/horizontal`,
-        fieldName: "images",
-        multiple: true,
-        accept: "image/*",
-        extraFields: [{ name: "sort_order", label: "Sort from", type: "number", parser: "integer", defaultValue: 0 }],
-      },
-      {
-        key: "vertical-images",
-        label: "Добавить vertical images",
-        path: (row) => `/api/v1/bookings/${row.id}/images/vertical`,
+        key: "images",
+        label: "Добавить изображения",
+        path: (row) => `/api/v1/bookings/${row.id}/images`,
         fieldName: "images",
         multiple: true,
         accept: "image/*",
@@ -195,8 +186,7 @@ export const adminModules: AdminModule[] = [
       },
     ],
     details: [
-      { label: "Horizontal images", name: "horizontal_images" },
-      { label: "Vertical images", name: "vertical_images" },
+      { label: "Images", name: "images" },
     ],
     supportsBookingImages: true,
   },

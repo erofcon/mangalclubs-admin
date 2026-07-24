@@ -1511,12 +1511,7 @@ function BookingImagesEditor({
   onBookingChange: (booking: JsonRecord) => void;
   onDone: () => void | Promise<void>;
 }) {
-  const horizontalImages = Array.isArray(booking.horizontal_images) ? (booking.horizontal_images as JsonRecord[]) : [];
-  const verticalImages = Array.isArray(booking.vertical_images) ? (booking.vertical_images as JsonRecord[]) : [];
-  const images: JsonRecord[] = [
-    ...horizontalImages.map((image) => ({ ...image, orientation: image.orientation || "horizontal" })),
-    ...verticalImages.map((image) => ({ ...image, orientation: image.orientation || "vertical" })),
-  ];
+  const images = Array.isArray(booking.images) ? (booking.images as JsonRecord[]) : [];
   const [busyId, setBusyId] = useState("");
   const [status, setStatus] = useState("");
 
@@ -1554,7 +1549,6 @@ function BookingImagesEditor({
             <tr>
               <th>Action</th>
               <th>URL</th>
-              <th>Orientation</th>
               <th>Sort</th>
             </tr>
           </thead>
@@ -1574,14 +1568,13 @@ function BookingImagesEditor({
                     </button>
                   </td>
                   <td>{compactMedia(image.url)}</td>
-                  <td>{compact(image.orientation)}</td>
                   <td>{compact(image.sort_order)}</td>
                 </tr>
               );
             })}
             {!images.length ? (
               <tr>
-                <td colSpan={4} className="muted">
+                <td colSpan={3} className="muted">
                   No images.
                 </td>
               </tr>
