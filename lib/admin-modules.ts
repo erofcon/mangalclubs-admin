@@ -200,11 +200,12 @@ export const adminModules: AdminModule[] = [
     updatePath: (row) => `/api/v1/delivery-zones/${row.id}`,
     deletePath: (row) => `/api/v1/delivery-zones/${row.id}`,
     idField: "id",
-    columns: ["distance_from_km", "distance_to_km", "price"],
+    columns: ["distance_from_km", "distance_to_km", "price", "delivery_time"],
     fields: [
       { name: "distance_from_km", label: "From km", type: "number", required: true, parser: "number" },
       { name: "distance_to_km", label: "To km", type: "number", emptyAsNull: true, parser: "number" },
       { name: "price", label: "Price", type: "number", required: true, parser: "integer" },
+      { name: "delivery_time", label: "Delivery time", type: "text", required: true, placeholder: "45–60 минут" },
     ],
   },
   {
