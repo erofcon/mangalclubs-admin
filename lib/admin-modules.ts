@@ -111,15 +111,8 @@ export const adminModules: AdminModule[] = [
     updatePath: (row) => `/api/v1/bookings/categories/${row.id}`,
     deletePath: (row) => `/api/v1/bookings/categories/${row.id}`,
     idField: "id",
-    columns: ["title", "organization", "description", "sort_order", "is_active"],
+    columns: ["title", "description", "sort_order", "is_active"],
     fields: [
-      {
-        name: "organization_id",
-        label: "Organization",
-        type: "select",
-        required: true,
-        relation: { moduleKey: "organizations", labelFields: ["name"] },
-      },
       { name: "title", label: "Title", type: "text", required: true },
       { name: "description", label: "Description", type: "textarea", emptyAsNull: true, wide: true },
       { name: "preview_url", label: "Preview URL (optional external)", type: "text", emptyAsNull: true, wide: true },

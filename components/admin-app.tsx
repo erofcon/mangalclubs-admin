@@ -360,34 +360,17 @@ function finiteNumberOrNull(value: unknown) {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
-function relationById(relationRows: Record<string, JsonRecord[]>, fieldName: string, id: unknown) {
-  const target = textValue(id);
-  if (!target) return undefined;
-  return relationRows[fieldName]?.find((row) => textValue(row.id) === target);
-}
-
 function validateBeforeSave(
   module: AdminModule,
   state: FormState,
   payload: JsonRecord,
   selected: JsonRecord | null,
-  relationRows: Record<string, JsonRecord[]>,
 ) {
   if (module.key === "organizations") {
     const acceptsDelivery = booleanValue(nextValue(payload, state, selected, "accepts_delivery"));
     const isDefaultDelivery = booleanValue(nextValue(payload, state, selected, "is_default_delivery"));
     if (isDefaultDelivery && !acceptsDelivery) {
       return "Default delivery requires Accepts delivery.";
-    }
-  }
-
-  if (module.key === "bookings") {
-    const organizationId = textValue(nextValue(payload, state, selected, "organization_id"));
-    const categoryId = textValue(nextValue(payload, state, selected, "category_id"));
-    const category = relationById(relationRows, "category_id", categoryId);
-    const categoryOrganizationId = textValue(category?.organization_id);
-    if (organizationId && categoryOrganizationId && organizationId !== categoryOrganizationId) {
-      return "Booking category belongs to another organization.";
     }
   }
 
@@ -1815,7 +1798,6 @@ function OrderAnalytics({
 function ModuleView({ module, request }: { module: AdminModule; request: Requester }) {
   const [rows, setRows] = useState<JsonRecord[]>([]);
   const [relationOptions, setRelationOptions] = useState<Record<string, SelectOption[]>>({});
-  const [relationRows, setRelationRows] = useState<Record<string, JsonRecord[]>>({});
   const [selected, setSelected] = useState<JsonRecord | null>(null);
   const [form, setForm] = useState<FormState>(() => initialForm(module));
   const [dirtyFields, setDirtyFields] = useState<Set<string>>(() => new Set());
@@ -1856,12 +1838,10 @@ function ModuleView({ module, request }: { module: AdminModule; request: Request
     const fields = module.fields.filter((field) => field.relation);
     if (!fields.length) {
       setRelationOptions({});
-      setRelationRows({});
       return;
     }
 
     const nextOptions: Record<string, SelectOption[]> = {};
-    const nextRows: Record<string, JsonRecord[]> = {};
 
     await Promise.all(
       fields.map(async (field) => {
@@ -1875,20 +1855,17 @@ function ModuleView({ module, request }: { module: AdminModule; request: Request
           const valueField = relation.valueField || relatedModule.idField;
           const labelFields = relation.labelFields || ["name", "title", "slug"];
 
-          nextRows[field.name] = relationData;
           nextOptions[field.name] = relationData.map((row) => ({
             value: String(row[valueField] ?? ""),
             label: optionLabel(row, labelFields),
           }));
         } catch {
-          nextRows[field.name] = [];
           nextOptions[field.name] = [];
         }
       }),
     );
 
     setRelationOptions(nextOptions);
-    setRelationRows(nextRows);
   }
 
   useEffect(() => {
@@ -1938,7 +1915,7 @@ function ModuleView({ module, request }: { module: AdminModule; request: Request
       setStatus("No changes to save.");
       return;
     }
-    const validationError = validateBeforeSave(module, form, payload, selected, relationRows);
+    const validationError = validateBeforeSave(module, form, payload, selected);
     if (validationError) {
       setStatus(validationError);
       return;
